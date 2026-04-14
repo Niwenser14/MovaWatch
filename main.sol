@@ -138,3 +138,73 @@ abstract contract TwinStepOwnable {
 
     event OwnershipTransferStarted(address indexed owner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    address private _owner;
+    address private _pendingOwner;
+
+    constructor(address initialOwner) {
+        if (initialOwner == address(0)) revert TwinStepOwnable__ZeroAddress();
+        _owner = initialOwner;
+        emit OwnershipTransferred(address(0), initialOwner);
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != _owner) revert TwinStepOwnable__NotOwner();
+        _;
+    }
+
+    function owner() public view returns (address) {
+        return _owner;
+    }
+
+    function pendingOwner() public view returns (address) {
+        return _pendingOwner;
+    }
+
+    function transferOwnership(address nextOwner) external onlyOwner {
+        if (nextOwner == address(0)) revert TwinStepOwnable__ZeroAddress();
+        _pendingOwner = nextOwner;
+        emit OwnershipTransferStarted(_owner, nextOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != _pendingOwner) revert TwinStepOwnable__NotPendingOwner();
+        address old = _owner;
+        _owner = msg.sender;
+        _pendingOwner = address(0);
+        emit OwnershipTransferred(old, msg.sender);
+    }
+}
+
+/// @notice Pause gate.
+abstract contract PauseLatch is TwinStepOwnable {
+    error PauseLatch__Paused();
+
+    event PauseSet(bool paused);
+
+    bool private _paused;
+
+    constructor(address initialOwner) TwinStepOwnable(initialOwner) {}
+
+    modifier whenNotPaused() {
+        if (_paused) revert PauseLatch__Paused();
+        _;
+    }
+
+    function paused() public view returns (bool) {
+        return _paused;
+    }
+
+    function setPaused(bool p) external onlyOwner {
+        _paused = p;
+        emit PauseSet(p);
+    }
+}
+
+/// @notice Reentrancy guard.
+abstract contract ReentryShield {
+    error ReentryShield__Reentrant();
+
+    uint256 private _guard;
+
+    constructor() {
