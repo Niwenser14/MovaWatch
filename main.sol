@@ -68,3 +68,73 @@ library Bytes32Pouch {
         return true;
     }
 
+    function remove(Set storage s, bytes32 v) internal returns (bool) {
+        uint256 p = s._posPlusOne[v];
+        if (p == 0) return false;
+        uint256 idx = p - 1;
+        uint256 last = s._items.length - 1;
+        if (idx != last) {
+            bytes32 swap = s._items[last];
+            s._items[idx] = swap;
+            s._posPlusOne[swap] = idx + 1;
+        }
+        s._items.pop();
+        delete s._posPlusOne[v];
+        return true;
+    }
+}
+
+/// @notice Tiny address set for operator/reporters management.
+library AddressPouch {
+    error AddressPouch__IndexOOB();
+
+    struct Set {
+        address[] _items;
+        mapping(address => uint256) _posPlusOne;
+    }
+
+    function length(Set storage s) internal view returns (uint256) {
+        return s._items.length;
+    }
+
+    function at(Set storage s, uint256 index) internal view returns (address) {
+        if (index >= s._items.length) revert AddressPouch__IndexOOB();
+        return s._items[index];
+    }
+
+    function contains(Set storage s, address v) internal view returns (bool) {
+        return s._posPlusOne[v] != 0;
+    }
+
+    function add(Set storage s, address v) internal returns (bool) {
+        if (v == address(0)) return false;
+        if (s._posPlusOne[v] != 0) return false;
+        s._items.push(v);
+        s._posPlusOne[v] = s._items.length;
+        return true;
+    }
+
+    function remove(Set storage s, address v) internal returns (bool) {
+        uint256 p = s._posPlusOne[v];
+        if (p == 0) return false;
+        uint256 idx = p - 1;
+        uint256 last = s._items.length - 1;
+        if (idx != last) {
+            address swap = s._items[last];
+            s._items[idx] = swap;
+            s._posPlusOne[swap] = idx + 1;
+        }
+        s._items.pop();
+        delete s._posPlusOne[v];
+        return true;
+    }
+}
+
+/// @notice Minimal two-step ownership.
+abstract contract TwinStepOwnable {
+    error TwinStepOwnable__NotOwner();
+    error TwinStepOwnable__NotPendingOwner();
+    error TwinStepOwnable__ZeroAddress();
+
+    event OwnershipTransferStarted(address indexed owner, address indexed pendingOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
