@@ -418,3 +418,73 @@ contract MovaWatch is PauseLatch {
         ACCESS_BEACON_C = address(0x9dB0E3c71A5f2C90a6B7d4E1c8F0aB2D3e7C1a9B);
         ACCESS_BEACON_D = address(0x0F1aB2c3D4e5F60718293aBcD0eF1a2B3c4D5e6F);
 
+        DOMAIN_SPINE = keccak256(
+            abi.encodePacked(
+                bytes32(0x8d2d73b1fdc3a9e1f2a5b6c77aa1b9c5d8e0f11a2233445566778899aabbccdd),
+                block.prevrandao,
+                blockhash(block.number - 1),
+                address(this),
+                uint256(0x07d9aC11f0B3eE2aA9cD14B70e1C5F9A2b6D3c81)
+            )
+        );
+
+        // Default global role seeds (can be changed by owner).
+        _setReporter(address(0x5bA0c7D91eF23a4B8c0dE1f2a3B4c5D6e7F8091a), true);
+        _setReporter(address(0xC19bA0e7F2d3C4b5A60718293aBcD0eF1a2B3c4D), true);
+        _setAiNode(address(0x7E1a9B0c2D3e4F5a60718293ABcD0ef1a2b3C4d5), true);
+        _setAiNode(address(0xB4cD93a26E0bC1dF94A2e70cB3f9a8D7C12E4aB0), true);
+    }
+
+    // ---- domain / typed data ----
+    function domainSeparator() public view returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    _DOMAIN_TYPEHASH,
+                    _NAME_HASH,
+                    _VERSION_HASH,
+                    block.chainid,
+                    address(this),
+                    DOMAIN_SPINE
+                )
+            );
+    }
+
+    function hashTypedData(bytes32 structHash) public view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
+    }
+
+    // ---- zone identity helpers ----
+    function deriveZoneKey(address zoneOwner, bytes32 zoneSalt) public pure returns (bytes32) {
+        // distinct tag prevents confusion with other keccak-derived keys
+        return keccak256(abi.encodePacked("MovaWatch.ZoneKey.v1", zoneOwner, zoneSalt));
+    }
+
+    function zoneExists(bytes32 zoneKey) public view returns (bool) {
+        return _zone[zoneKey].exists;
+    }
+
+    function zoneOwner(bytes32 zoneKey) public view returns (address) {
+        return _zone[zoneKey].owner;
+    }
+
+    function zoneLabelHash(bytes32 zoneKey) public view returns (bytes32) {
+        return _zone[zoneKey].labelHash;
+    }
+
+    function zoneCreatedAt(bytes32 zoneKey) public view returns (uint64) {
+        return _zone[zoneKey].createdAt;
+    }
+
+    function zonePolicy(bytes32 zoneKey) external view returns (ZonePolicy memory) {
+        return _zonePolicy[zoneKey];
+    }
+
+    // ---- zone management ----
+    function forgeZone(bytes32 zoneSalt, string calldata label) external whenNotPaused returns (bytes32 zoneKey) {
+        if (bytes(label).length > _MAX_ZONE_LABEL_BYTES) revert MovaWatch__LabelTooLong();
+        zoneKey = deriveZoneKey(msg.sender, zoneSalt);
+        ZoneCore storage z = _zone[zoneKey];
+        if (z.exists) revert MovaWatch__ZoneExists();
+
+        z.owner = msg.sender;
