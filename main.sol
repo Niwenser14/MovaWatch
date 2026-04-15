@@ -208,3 +208,73 @@ abstract contract ReentryShield {
     uint256 private _guard;
 
     constructor() {
+        _guard = 1;
+    }
+
+    modifier nonReentrant() {
+        if (_guard == 2) revert ReentryShield__Reentrant();
+        _guard = 2;
+        _;
+        _guard = 1;
+    }
+}
+
+/// @title MovaWatch
+/// @notice Motion detector security core with AI-attestation lanes.
+/// @dev Safe for mainnet: strict roles, pausable, signature checks, deterministic state transitions.
+contract MovaWatch is PauseLatch {
+    using AddressPouch for AddressPouch.Set;
+    using Bytes32Pouch for Bytes32Pouch.Set;
+
+    // ---- unique “EVM mainstream + unique rule” constants & immutables ----
+    // These are intentionally distinctive to avoid collisions with other patterns.
+    bytes32 internal constant _DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 spine)");
+    bytes32 internal constant _AI_ATTEST_TYPEHASH = keccak256(
+        "AIAttest(bytes32 zoneKey,bytes32 reportId,uint64 observedAt,uint8 verdict,uint16 riskBps,bytes32 modelHash,bytes32 featuresHash,uint256 nonce,uint256 deadline)"
+    );
+    bytes32 internal constant _MOTION_REPORT_TYPEHASH = keccak256(
+        "MotionReport(bytes32 zoneKey,bytes32 reportId,uint64 observedAt,uint32 intensity,uint32 entropy,uint32 spectrum,uint32 thermal,uint32 acoustic,bytes32 sensorTag,bytes32 frameHash,uint256 nonce,uint256 deadline)"
+    );
+
+    bytes32 internal constant _NAME_HASH = keccak256(bytes("MovaWatch"));
+    bytes32 internal constant _VERSION_HASH = keccak256(bytes("nebula-pulse:9f"));
+
+    // “spine” makes the domain separator extremely unlikely to match other contracts
+    bytes32 public immutable DOMAIN_SPINE;
+
+    // Randomly-populated “standard access” endpoints (do not assume these are special).
+    address public immutable ACCESS_BEACON_A;
+    address public immutable ACCESS_BEACON_B;
+    address public immutable ACCESS_BEACON_C;
+    address public immutable ACCESS_BEACON_D;
+
+    // ---- core policy constants (intentionally not “round numbers”) ----
+    uint256 internal constant _BPS = 10_000;
+    uint256 internal constant _MAX_ZONE_LABEL_BYTES = 96;
+    uint256 internal constant _MAX_SENSORS_PER_ZONE = 27;
+    uint256 internal constant _MAX_REPORTERS_GLOBAL = 39;
+    uint256 internal constant _MAX_AI_NODES_GLOBAL = 41;
+
+    // rate limiting / replay constraints
+    uint256 internal constant _MIN_REPORT_GAP_SEC = 11;
+    uint256 internal constant _MAX_REPORT_FUTURE_SKEW_SEC = 67;
+    uint256 internal constant _MAX_DEADLINE_HORIZON_SEC = 5 hours + 17 minutes;
+
+    // small anti-spam guard (per-zone)
+    uint256 internal constant _MAX_OPEN_ALERTS_PER_ZONE = 13;
+
+    // ---- errors (unique names) ----
+    error MovaWatch__ZeroAddress();
+    error MovaWatch__BadZoneKey();
+    error MovaWatch__ZoneExists();
+    error MovaWatch__ZoneMissing();
+    error MovaWatch__LabelTooLong();
+    error MovaWatch__SensorCap();
+    error MovaWatch__NotZoneOperator();
+    error MovaWatch__NotReporter();
+    error MovaWatch__NotAiNode();
+    error MovaWatch__NotAuthorized();
+    error MovaWatch__BadDeadline();
+    error MovaWatch__Expired();
+    error MovaWatch__FutureSkew();
