@@ -628,3 +628,73 @@ contract MovaWatch is PauseLatch {
 
     function setReporter(address reporter, bool allowed) external onlyOwner {
         _setReporter(reporter, allowed);
+    }
+
+    function setAiNode(address aiNode, bool allowed) external onlyOwner {
+        _setAiNode(aiNode, allowed);
+    }
+
+    function _setReporter(address reporter, bool allowed) internal {
+        if (reporter == address(0)) revert MovaWatch__ZeroAddress();
+        if (allowed) {
+            if (!_reporter[reporter]) {
+                if (_reporters.length() >= _MAX_REPORTERS_GLOBAL) revert MovaWatch__NotAuthorized();
+                _reporter[reporter] = true;
+                _reporters.add(reporter);
+            }
+        } else {
+            if (_reporter[reporter]) {
+                _reporter[reporter] = false;
+                _reporters.remove(reporter);
+            }
+        }
+        emit ReporterSet(reporter, allowed);
+    }
+
+    function _setAiNode(address aiNode, bool allowed) internal {
+        if (aiNode == address(0)) revert MovaWatch__ZeroAddress();
+        if (allowed) {
+            if (!_aiNode[aiNode]) {
+                if (_aiNodes.length() >= _MAX_AI_NODES_GLOBAL) revert MovaWatch__NotAuthorized();
+                _aiNode[aiNode] = true;
+                _aiNodes.add(aiNode);
+            }
+        } else {
+            if (_aiNode[aiNode]) {
+                _aiNode[aiNode] = false;
+                _aiNodes.remove(aiNode);
+            }
+        }
+        emit AiNodeSet(aiNode, allowed);
+    }
+
+    // ---- motion report lane (signed, replay-protected) ----
+    function previewMotionStructHash(
+        bytes32 zoneKey,
+        bytes32 reportId,
+        uint64 observedAt,
+        uint32 intensity,
+        uint32 entropy,
+        uint32 spectrum,
+        uint32 thermal,
+        uint32 acoustic,
+        bytes32 sensorTag,
+        bytes32 frameHash,
+        uint256 nonce,
+        uint256 deadline
+    ) public pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    _MOTION_REPORT_TYPEHASH,
+                    zoneKey,
+                    reportId,
+                    observedAt,
+                    intensity,
+                    entropy,
+                    spectrum,
+                    thermal,
+                    acoustic,
+                    sensorTag,
+                    frameHash,
+                    nonce,
