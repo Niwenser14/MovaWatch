@@ -278,3 +278,73 @@ contract MovaWatch is PauseLatch {
     error MovaWatch__BadDeadline();
     error MovaWatch__Expired();
     error MovaWatch__FutureSkew();
+    error MovaWatch__Replay();
+    error MovaWatch__ReportGap();
+    error MovaWatch__RiskOutOfRange();
+    error MovaWatch__OpenAlertCap();
+    error MovaWatch__BadSig();
+    error MovaWatch__BadNonce();
+    error MovaWatch__BadVerdict();
+    error MovaWatch__BadReporterTag();
+    error MovaWatch__AlreadyFinal();
+    error MovaWatch__BadPagination();
+
+    // ---- events (unique names) ----
+    event ZoneForged(bytes32 indexed zoneKey, address indexed zoneOwner, bytes32 indexed zoneSalt, bytes32 labelHash);
+    event ZoneLabelSet(bytes32 indexed zoneKey, bytes32 indexed labelHash, string label);
+    event ZoneOperatorSet(bytes32 indexed zoneKey, address indexed operator, bool allowed);
+    event ZoneSensorRegistered(bytes32 indexed zoneKey, bytes32 indexed sensorId, bytes32 sensorTag);
+    event ZoneSensorRemoved(bytes32 indexed zoneKey, bytes32 indexed sensorId);
+    event ReporterSet(address indexed reporter, bool allowed);
+    event AiNodeSet(address indexed aiNode, bool allowed);
+
+    event MotionReportAccepted(
+        bytes32 indexed zoneKey,
+        bytes32 indexed reportId,
+        address indexed reporter,
+        uint64 observedAt,
+        uint32 intensity,
+        bytes32 frameHash
+    );
+
+    event AiAttestationAccepted(
+        bytes32 indexed zoneKey,
+        bytes32 indexed reportId,
+        address indexed aiNode,
+        uint8 verdict,
+        uint16 riskBps,
+        bytes32 modelHash
+    );
+
+    event AlertOpened(bytes32 indexed zoneKey, bytes32 indexed alertId, bytes32 indexed reportId, uint16 riskBps);
+    event AlertResolved(bytes32 indexed zoneKey, bytes32 indexed alertId, uint8 resolutionCode, bytes32 resolutionRef);
+    event ZonePolicySet(bytes32 indexed zoneKey, uint16 openThresholdBps, uint16 autoResolveBelowBps, uint16 cooldownSec);
+
+    // ---- types ----
+    enum Verdict {
+        Unknown,
+        Benign,
+        Suspicious,
+        Intrusion,
+        Tamper,
+        SensorFault,
+        PatternShift
+    }
+
+    enum AlertState {
+        Null,
+        Open,
+        Resolved
+    }
+
+    struct ZonePolicy {
+        uint16 openThresholdBps; // if risk >= threshold => open alert (subject to caps)
+        uint16 autoResolveBelowBps; // if later risk < this => allow auto-resolve (by AI lane)
+        uint16 cooldownSec; // minimum seconds between accepted reports
+        uint16 reserved; // keeps packing stable
+    }
+
+    struct ZoneCore {
+        address owner;
+        bytes32 zoneSalt;
+        bytes32 labelHash;
