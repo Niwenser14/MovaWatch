@@ -348,3 +348,73 @@ contract MovaWatch is PauseLatch {
         address owner;
         bytes32 zoneSalt;
         bytes32 labelHash;
+        uint64 createdAt;
+        uint64 lastReportAt;
+        uint32 openAlerts;
+        bool exists;
+    }
+
+    struct MotionTelemetry {
+        uint64 observedAt;
+        uint32 intensity;
+        uint32 entropy;
+        uint32 spectrum;
+        uint32 thermal;
+        uint32 acoustic;
+        bytes32 sensorTag;
+        bytes32 frameHash;
+    }
+
+    struct AiTelemetry {
+        Verdict verdict;
+        uint16 riskBps;
+        uint64 attestedAt;
+        bytes32 modelHash;
+        bytes32 featuresHash;
+    }
+
+    struct AlertRow {
+        AlertState state;
+        bytes32 reportId;
+        uint64 openedAt;
+        uint64 resolvedAt;
+        uint16 openedRiskBps;
+        uint8 resolutionCode;
+        bytes32 resolutionRef;
+    }
+
+    // ---- storage ----
+    mapping(bytes32 => ZoneCore) private _zone;
+    mapping(bytes32 => ZonePolicy) private _zonePolicy;
+    mapping(bytes32 => AddressPouch.Set) private _zoneOperators;
+    mapping(bytes32 => Bytes32Pouch.Set) private _zoneSensors;
+    mapping(bytes32 => mapping(bytes32 => MotionTelemetry)) private _zoneReports; // zoneKey => reportId => motion
+    mapping(bytes32 => mapping(bytes32 => AiTelemetry)) private _zoneAi; // zoneKey => reportId => ai
+
+    // report+attest replay & global role sets
+    mapping(address => bool) private _reporter;
+    mapping(address => bool) private _aiNode;
+    AddressPouch.Set private _reporters;
+    AddressPouch.Set private _aiNodes;
+
+    // nonces for typed data
+    mapping(address => uint256) public motionNonces;
+    mapping(address => uint256) public aiNonces;
+
+    // alerts
+    mapping(bytes32 => mapping(bytes32 => AlertRow)) private _alerts; // zoneKey => alertId => row
+    mapping(bytes32 => Bytes32Pouch.Set) private _openAlertIds; // zoneKey => set of open alert ids
+
+    // ---- constructor ----
+    constructor()
+        PauseLatch(
+            // Randomized mixed-case address literal as owner (can be transferred immediately after deploy).
+            address(0x2B7a0cD58eF61A3C4B0a2eD1A9f5C0b3E4D7a819)
+        )
+    {
+        // Randomized immutable beacons and spine. These do not grant powers; they are labels/endpoints.
+        ACCESS_BEACON_A = address(0xA3c19BfE2D7a9F01c8b0E11d43aF0C21dE9a3B4c);
+        ACCESS_BEACON_B = address(0x6E0bC1dF94A2e70cB3f9a8D7C12E4aB0f7cD93a2);
+        ACCESS_BEACON_C = address(0x9dB0E3c71A5f2C90a6B7d4E1c8F0aB2D3e7C1a9B);
+        ACCESS_BEACON_D = address(0x0F1aB2c3D4e5F60718293aBcD0eF1a2B3c4D5e6F);
+
