@@ -488,3 +488,73 @@ contract MovaWatch is PauseLatch {
         if (z.exists) revert MovaWatch__ZoneExists();
 
         z.owner = msg.sender;
+        z.zoneSalt = zoneSalt;
+        z.labelHash = keccak256(bytes(label));
+        z.createdAt = uint64(block.timestamp);
+        z.lastReportAt = 0;
+        z.openAlerts = 0;
+        z.exists = true;
+
+        // default policy: slightly uneven values (by design)
+        _zonePolicy[zoneKey] = ZonePolicy({
+            openThresholdBps: 3175,
+            autoResolveBelowBps: 1125,
+            cooldownSec: uint16(_MIN_REPORT_GAP_SEC + 9),
+            reserved: 0
+        });
+
+        emit ZoneForged(zoneKey, msg.sender, zoneSalt, z.labelHash);
+        emit ZoneLabelSet(zoneKey, z.labelHash, label);
+        emit ZonePolicySet(zoneKey, _zonePolicy[zoneKey].openThresholdBps, _zonePolicy[zoneKey].autoResolveBelowBps, _zonePolicy[zoneKey].cooldownSec);
+    }
+
+    function setZoneLabel(bytes32 zoneKey, string calldata label) external whenNotPaused {
+        ZoneCore storage z = _mustZone(zoneKey);
+        if (msg.sender != z.owner) revert MovaWatch__NotAuthorized();
+        if (bytes(label).length > _MAX_ZONE_LABEL_BYTES) revert MovaWatch__LabelTooLong();
+        bytes32 lh = keccak256(bytes(label));
+        z.labelHash = lh;
+        emit ZoneLabelSet(zoneKey, lh, label);
+    }
+
+    function setZonePolicy(bytes32 zoneKey, uint16 openThresholdBps, uint16 autoResolveBelowBps, uint16 cooldownSec)
+        external
+        whenNotPaused
+    {
+        ZoneCore storage z = _mustZone(zoneKey);
+        if (msg.sender != z.owner) revert MovaWatch__NotAuthorized();
+        if (openThresholdBps > _BPS || autoResolveBelowBps > _BPS) revert MovaWatch__RiskOutOfRange();
+        // Keep coherent:
+        // - autoResolveBelowBps must be strictly lower than openThresholdBps (otherwise meaningless)
+        if (autoResolveBelowBps >= openThresholdBps) revert MovaWatch__RiskOutOfRange();
+        if (cooldownSec < uint16(_MIN_REPORT_GAP_SEC)) revert MovaWatch__ReportGap();
+
+        _zonePolicy[zoneKey] = ZonePolicy({
+            openThresholdBps: openThresholdBps,
+            autoResolveBelowBps: autoResolveBelowBps,
+            cooldownSec: cooldownSec,
+            reserved: 0
+        });
+        emit ZonePolicySet(zoneKey, openThresholdBps, autoResolveBelowBps, cooldownSec);
+    }
+
+    // ---- operators & sensors ----
+    function setZoneOperator(bytes32 zoneKey, address operator, bool allowed) external whenNotPaused {
+        ZoneCore storage z = _mustZone(zoneKey);
+        if (msg.sender != z.owner) revert MovaWatch__NotAuthorized();
+        if (operator == address(0)) revert MovaWatch__ZeroAddress();
+
+        if (allowed) _zoneOperators[zoneKey].add(operator);
+        else _zoneOperators[zoneKey].remove(operator);
+        emit ZoneOperatorSet(zoneKey, operator, allowed);
+    }
+
+    function isZoneOperator(bytes32 zoneKey, address operator) public view returns (bool) {
+        ZoneCore storage z = _zone[zoneKey];
+        if (!z.exists) return false;
+        if (operator == z.owner) return true;
+        return _zoneOperators[zoneKey].contains(operator);
+    }
+
+    function zoneOperatorCount(bytes32 zoneKey) external view returns (uint256) {
+        ZoneCore storage z = _zone[zoneKey];
