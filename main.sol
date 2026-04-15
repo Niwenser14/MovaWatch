@@ -558,3 +558,73 @@ contract MovaWatch is PauseLatch {
 
     function zoneOperatorCount(bytes32 zoneKey) external view returns (uint256) {
         ZoneCore storage z = _zone[zoneKey];
+        if (!z.exists) return 0;
+        return _zoneOperators[zoneKey].length();
+    }
+
+    function zoneOperatorAt(bytes32 zoneKey, uint256 index) external view returns (address) {
+        return _zoneOperators[zoneKey].at(index);
+    }
+
+    function registerZoneSensor(bytes32 zoneKey, bytes32 sensorId, bytes32 sensorTag) external whenNotPaused {
+        ZoneCore storage z = _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        if (sensorId == bytes32(0)) revert MovaWatch__BadZoneKey();
+        if (sensorTag == bytes32(0)) revert MovaWatch__BadReporterTag();
+
+        Bytes32Pouch.Set storage s = _zoneSensors[zoneKey];
+        if (!s.contains(sensorId)) {
+            if (s.length() >= _MAX_SENSORS_PER_ZONE) revert MovaWatch__SensorCap();
+            s.add(sensorId);
+        }
+        emit ZoneSensorRegistered(zoneKey, sensorId, sensorTag);
+    }
+
+    function removeZoneSensor(bytes32 zoneKey, bytes32 sensorId) external whenNotPaused {
+        ZoneCore storage z = _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        _zoneSensors[zoneKey].remove(sensorId);
+        emit ZoneSensorRemoved(zoneKey, sensorId);
+    }
+
+    function zoneSensorCount(bytes32 zoneKey) external view returns (uint256) {
+        ZoneCore storage z = _zone[zoneKey];
+        if (!z.exists) return 0;
+        return _zoneSensors[zoneKey].length();
+    }
+
+    function zoneSensorAt(bytes32 zoneKey, uint256 index) external view returns (bytes32) {
+        return _zoneSensors[zoneKey].at(index);
+    }
+
+    function zoneSensorContains(bytes32 zoneKey, bytes32 sensorId) external view returns (bool) {
+        return _zoneSensors[zoneKey].contains(sensorId);
+    }
+
+    // ---- global reporters / AI nodes ----
+    function isReporter(address a) public view returns (bool) {
+        return _reporter[a];
+    }
+
+    function isAiNode(address a) public view returns (bool) {
+        return _aiNode[a];
+    }
+
+    function reporterCount() external view returns (uint256) {
+        return _reporters.length();
+    }
+
+    function reporterAt(uint256 index) external view returns (address) {
+        return _reporters.at(index);
+    }
+
+    function aiNodeCount() external view returns (uint256) {
+        return _aiNodes.length();
+    }
+
+    function aiNodeAt(uint256 index) external view returns (address) {
+        return _aiNodes.at(index);
+    }
+
+    function setReporter(address reporter, bool allowed) external onlyOwner {
+        _setReporter(reporter, allowed);
