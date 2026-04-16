@@ -1048,3 +1048,73 @@ contract MovaWatch is PauseLatch {
             routeHint: routeHint
         });
         emit EscalationProfileSet(zoneKey, notifyBps, callBps, lockBps, routeHint);
+    }
+
+    /// @notice Returns quorum policy used by front-ends as a “quality bar”.
+    function quorumPolicy(bytes32 zoneKey) external view returns (QuorumPolicy memory) {
+        _mustZone(zoneKey);
+        return _quorum[zoneKey];
+    }
+
+    /// @notice Sets quorum policy (owner/operator).
+    function setQuorumPolicy(bytes32 zoneKey, uint8 minAi, uint8 hardMinAi, bytes32 laneTag) external whenNotPaused {
+        _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        if (minAi > _AI_QUORUM_MAX || hardMinAi > _AI_QUORUM_MAX) revert MovaWatch__QuorumOutOfRange();
+        if (hardMinAi > minAi) revert MovaWatch__QuorumOutOfRange();
+
+        _quorum[zoneKey] = QuorumPolicy({minAi: minAi, hardMinAi: hardMinAi, reserved: 0, laneTag: laneTag});
+        emit QuorumPolicySet(zoneKey, minAi, hardMinAi, laneTag);
+    }
+
+    /// @notice Returns AI attestation count for a report.
+    function aiAttestationCount(bytes32 zoneKey, bytes32 reportId) external view returns (uint8) {
+        _mustZone(zoneKey);
+        return _aiAttestCount[zoneKey][reportId];
+    }
+
+    /// @notice Writes an operator note to the zone’s ring buffer.
+    function writeOperatorNote(bytes32 zoneKey, uint16 kind, bytes32 ref, bytes32 payloadHash)
+        external
+        whenNotPaused
+        returns (bytes32 noteId)
+    {
+        _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        if (payloadHash == bytes32(0)) revert MovaWatch__BadReporterTag();
+
+        RingPtr storage rp = _noteRing[zoneKey];
+        if (rp.cap == 0) {
+            rp.cap = _NOTE_RING_CAP;
+        }
+
+        noteId = keccak256(abi.encodePacked("MovaWatch.Note.v1", zoneKey, msg.sender, kind, ref, payloadHash, block.timestamp, DOMAIN_SPINE));
+        uint256 idx = rp.head;
+        _noteByIndex[zoneKey][idx] = OperatorNote({
+            author: msg.sender,
+            notedAt: uint64(block.timestamp),
+            kind: kind,
+            ref: ref,
+            payloadHash: payloadHash
+        });
+
+        unchecked {
+            rp.head = uint32((idx + 1) % rp.cap);
+            if (rp.size < rp.cap) rp.size += 1;
+        }
+
+        emit OperatorNoteWritten(zoneKey, noteId, msg.sender, kind, ref, payloadHash);
+    }
+
+    /// @notice Returns ring metadata for operator notes.
+    function noteRing(bytes32 zoneKey) external view returns (RingPtr memory) {
+        _mustZone(zoneKey);
+        RingPtr memory rp = _noteRing[zoneKey];
+        if (rp.cap == 0) rp.cap = _NOTE_RING_CAP;
+        return rp;
+    }
+
+    /// @notice Reads operator notes by ring indices.
+    function noteAt(bytes32 zoneKey, uint256 ringIndex) external view returns (OperatorNote memory) {
+        _mustZone(zoneKey);
+        RingPtr memory rp = _noteRing[zoneKey];
