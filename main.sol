@@ -838,3 +838,73 @@ contract MovaWatch is PauseLatch {
             modelHash: modelHash,
             featuresHash: featuresHash
         });
+        _bumpAiCount(zoneKey, reportId);
+        aiNonces[msg.sender] = nonce + 1;
+
+        emit AiAttestationAccepted(zoneKey, reportId, msg.sender, verdictRaw, riskBps, modelHash);
+
+        _applyAiToAlerts(zoneKey, reportId, riskBps);
+    }
+
+    // ---- alerts ----
+    function openAlertCount(bytes32 zoneKey) external view returns (uint256) {
+        ZoneCore storage z = _zone[zoneKey];
+        if (!z.exists) return 0;
+        return _openAlertIds[zoneKey].length();
+    }
+
+    function openAlertIdAt(bytes32 zoneKey, uint256 index) external view returns (bytes32) {
+        return _openAlertIds[zoneKey].at(index);
+    }
+
+    function getAlert(bytes32 zoneKey, bytes32 alertId) external view returns (AlertRow memory) {
+        return _alerts[zoneKey][alertId];
+    }
+
+    /// @notice Operator may resolve an open alert with a resolution code and optional ref.
+    function resolveAlert(bytes32 zoneKey, bytes32 alertId, uint8 resolutionCode, bytes32 resolutionRef)
+        external
+        whenNotPaused
+    {
+        _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        AlertRow storage a = _alerts[zoneKey][alertId];
+        if (a.state != AlertState.Open) revert MovaWatch__AlreadyFinal();
+
+        a.state = AlertState.Resolved;
+        a.resolvedAt = uint64(block.timestamp);
+        a.resolutionCode = resolutionCode;
+        a.resolutionRef = resolutionRef;
+        _openAlertIds[zoneKey].remove(alertId);
+
+        ZoneCore storage z = _zone[zoneKey];
+        if (z.openAlerts > 0) z.openAlerts -= 1;
+
+        emit AlertResolved(zoneKey, alertId, resolutionCode, resolutionRef);
+    }
+
+    // ---- read helpers for reports ----
+    function getMotion(bytes32 zoneKey, bytes32 reportId) external view returns (MotionTelemetry memory) {
+        return _zoneReports[zoneKey][reportId];
+    }
+
+    function getAi(bytes32 zoneKey, bytes32 reportId) external view returns (AiTelemetry memory) {
+        return _zoneAi[zoneKey][reportId];
+    }
+
+    // ---- internal mechanics ----
+    function _applyAiToAlerts(bytes32 zoneKey, bytes32 reportId, uint16 riskBps) internal {
+        ZonePolicy memory pol = _zonePolicy[zoneKey];
+
+        // If high risk: open a new alert (capped).
+        if (riskBps >= pol.openThresholdBps) {
+            ZoneCore storage z = _zone[zoneKey];
+            if (z.openAlerts >= _MAX_OPEN_ALERTS_PER_ZONE) revert MovaWatch__OpenAlertCap();
+
+            // derive alert id from strong tuple to avoid collisions
+            bytes32 alertId = keccak256(
+                abi.encodePacked(
+                    "MovaWatch.Alert.v1",
+                    zoneKey,
+                    reportId,
+                    z.openAlerts,
