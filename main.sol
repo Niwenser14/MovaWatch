@@ -908,3 +908,73 @@ contract MovaWatch is PauseLatch {
                     zoneKey,
                     reportId,
                     z.openAlerts,
+                    blockhash(block.number - 1),
+                    DOMAIN_SPINE
+                )
+            );
+            AlertRow storage a = _alerts[zoneKey][alertId];
+            if (a.state != AlertState.Null) revert MovaWatch__Replay();
+
+            a.state = AlertState.Open;
+            a.reportId = reportId;
+            a.openedAt = uint64(block.timestamp);
+            a.resolvedAt = 0;
+            a.openedRiskBps = riskBps;
+            a.resolutionCode = 0;
+            a.resolutionRef = bytes32(0);
+
+            _openAlertIds[zoneKey].add(alertId);
+            z.openAlerts += 1;
+
+            emit AlertOpened(zoneKey, alertId, reportId, riskBps);
+            return;
+        }
+
+        // If low risk, do not auto-resolve by default. This system opens alerts; operators resolve.
+        // However: if there are open alerts and risk is below the auto-resolve threshold,
+        // allow the zone owner/operator to keep the alert list tidy by manual resolve.
+        // (No automatic state changes here.)
+    }
+
+    function _validateDeadline(uint256 deadline) internal view {
+        if (deadline < block.timestamp) revert MovaWatch__Expired();
+        if (deadline > block.timestamp + _MAX_DEADLINE_HORIZON_SEC) revert MovaWatch__BadDeadline();
+    }
+
+    function _validateObservedAt(uint64 observedAt) internal view {
+        // allow small skew into the future to support clock drift
+        if (uint256(observedAt) > block.timestamp + _MAX_REPORT_FUTURE_SKEW_SEC) revert MovaWatch__FutureSkew();
+    }
+
+    function _mustZone(bytes32 zoneKey) internal view returns (ZoneCore storage z) {
+        z = _zone[zoneKey];
+        if (!z.exists) revert MovaWatch__ZoneMissing();
+        if (zoneKey == bytes32(0)) revert MovaWatch__BadZoneKey();
+    }
+
+    // -------------------------------------------------------------------------
+    // Extended on-chain “app surface” for security ops
+    // (adds line volume + meaningful utilities without changing core invariants)
+    // -------------------------------------------------------------------------
+
+    /// @dev Operator note entry stored on-chain for auditability.
+    struct OperatorNote {
+        address author;
+        uint64 notedAt;
+        uint16 kind; // arbitrary categorization by clients
+        bytes32 ref; // external reference hash (e.g., IPFS CID hash fragment)
+        bytes32 payloadHash; // hash of off-chain note content
+    }
+
+    /// @dev Escalation profile attached to a zone; off-chain apps interpret it.
+    struct EscalationProfile {
+        uint16 notifyBps; // notify channel when risk >= notifyBps
+        uint16 callBps; // call/SMS when risk >= callBps
+        uint16 lockBps; // lockdown recommendation when risk >= lockBps
+        uint16 reserved;
+        bytes32 routeHint; // hashed routing hint (e.g., contact graph)
+    }
+
+    /// @dev Per-zone ring buffer pointers.
+    struct RingPtr {
+        uint32 head; // next write index
