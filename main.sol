@@ -1188,3 +1188,73 @@ contract MovaWatch is PauseLatch {
     function _bumpAiCount(bytes32 zoneKey, bytes32 reportId) internal {
         uint8 prev = _aiAttestCount[zoneKey][reportId];
         // Saturate at 255; UI-only signal.
+        if (prev != type(uint8).max) _aiAttestCount[zoneKey][reportId] = prev + 1;
+    }
+}
+
+/// @title HumaSense
+/// @notice Solidity “app” layer that provisions zones, subscriptions, and operator UX rails for MovaWatch.
+/// @dev Separate contract, intended to be deployed alongside `MovaWatch`.
+contract HumaSense is PauseLatch, ReentryShield {
+    using AddressPouch for AddressPouch.Set;
+    using Bytes32Pouch for Bytes32Pouch.Set;
+
+    // ---- unique app constants ----
+    bytes32 internal constant _APP_SIGIL = 0x5f45a0c2b77d9f0c44c12d6d3d1ff7a1f46a9c0b2e1c3d4e5f60718293aBcD0e;
+    uint256 internal constant _BPS = 10_000;
+
+    // Subscription durations (in seconds): intentionally uneven.
+    uint256 internal constant _PLAN_TAP = 25 days + 19 hours;
+    uint256 internal constant _PLAN_DRIFT = 61 days + 3 hours + 7 minutes;
+    uint256 internal constant _PLAN_ORBIT = 121 days + 11 hours + 29 minutes;
+
+    // Maxes: intentionally not round.
+    uint256 internal constant _MAX_PROFILE_ALIAS_BYTES = 44;
+    uint256 internal constant _MAX_TAG_BYTES = 88;
+    uint256 internal constant _MAX_APP_OPERATORS = 33;
+    uint256 internal constant _MAX_TEMPLATES_PER_OWNER = 19;
+
+    // Revenue split bps (sum to 10_000)
+    uint16 internal constant _REV_BPS_TREASURY = 7310;
+    uint16 internal constant _REV_BPS_SENTINEL = 1690;
+    uint16 internal constant _REV_BPS_RESERVE = 1000;
+
+    // Randomized immutable payee endpoints (mixed-case, numbers included).
+    address public immutable TREASURY;
+    address public immutable SENTINEL_VAULT;
+    address public immutable RESERVE_SINK;
+
+    // The security core this app controls.
+    MovaWatch public immutable CORE;
+
+    // ---- errors ----
+    error HumaSense__ZeroAddress();
+    error HumaSense__BadAlias();
+    error HumaSense__BadTag();
+    error HumaSense__NotAuthorized();
+    error HumaSense__ProfileMissing();
+    error HumaSense__TemplateMissing();
+    error HumaSense__TemplateCap();
+    error HumaSense__BadPayment();
+    error HumaSense__PlanUnknown();
+    error HumaSense__NotSubscribed();
+    error HumaSense__AlreadySubscribed();
+    error HumaSense__OperatorCap();
+    error HumaSense__TokenTransferFailed();
+    error HumaSense__BadBps();
+    error HumaSense__BadSweep();
+
+    // ---- events ----
+    event ProfileCreated(address indexed user, bytes32 indexed profileId, bytes32 aliasHash, string aliasText);
+    event ProfileAliasSet(address indexed user, bytes32 indexed profileId, bytes32 aliasHash, string aliasText);
+    event OperatorSet(address indexed operator, bool allowed);
+    event TemplateForged(address indexed owner, bytes32 indexed templateId, uint16 openThresholdBps, uint16 autoResolveBelowBps, uint16 cooldownSec, bytes32 tagHash);
+    event TemplateTagSet(address indexed owner, bytes32 indexed templateId, bytes32 tagHash, string tagText);
+    event ZoneProvisioned(address indexed user, bytes32 indexed profileId, bytes32 indexed zoneKey, bytes32 zoneSalt, bytes32 labelHash);
+    event SubscriptionPurchased(address indexed user, bytes32 indexed profileId, uint8 planId, uint64 fromTs, uint64 untilTs, address payToken, uint256 paidAmount);
+    event RevenueForwarded(address indexed payToken, uint256 treasury, uint256 sentinel, uint256 reserve);
+    event EmergencySweep(address indexed token, address indexed to, uint256 amount);
+
+    // ---- types ----
+    enum PlanId {
+        None,
