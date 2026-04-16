@@ -768,3 +768,73 @@ contract MovaWatch is PauseLatch {
         emit MotionReportAccepted(zoneKey, reportId, msg.sender, observedAt, intensity, frameHash);
     }
 
+    // ---- AI attestation lane (signed, replay-protected) ----
+    function previewAiStructHash(
+        bytes32 zoneKey,
+        bytes32 reportId,
+        uint64 observedAt,
+        uint8 verdict,
+        uint16 riskBps,
+        bytes32 modelHash,
+        bytes32 featuresHash,
+        uint256 nonce,
+        uint256 deadline
+    ) public pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encode(
+                    _AI_ATTEST_TYPEHASH,
+                    zoneKey,
+                    reportId,
+                    observedAt,
+                    verdict,
+                    riskBps,
+                    modelHash,
+                    featuresHash,
+                    nonce,
+                    deadline
+                )
+            );
+    }
+
+    function submitAiAttestation(
+        bytes32 zoneKey,
+        bytes32 reportId,
+        uint64 observedAt,
+        uint8 verdictRaw,
+        uint16 riskBps,
+        bytes32 modelHash,
+        bytes32 featuresHash,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external whenNotPaused {
+        _mustZone(zoneKey);
+        if (!_aiNode[msg.sender]) revert MovaWatch__NotAiNode();
+        _validateDeadline(deadline);
+        _validateObservedAt(observedAt);
+        if (riskBps > _BPS) revert MovaWatch__RiskOutOfRange();
+        if (verdictRaw == 0 || verdictRaw > uint8(Verdict.PatternShift)) revert MovaWatch__BadVerdict();
+
+        MotionTelemetry memory mot = _zoneReports[zoneKey][reportId];
+        if (mot.observedAt == 0) revert MovaWatch__Replay(); // no motion report yet
+        if (mot.observedAt != observedAt) revert MovaWatch__BadZoneKey();
+
+        uint256 nonce = aiNonces[msg.sender];
+        bytes32 sh = previewAiStructHash(zoneKey, reportId, observedAt, verdictRaw, riskBps, modelHash, featuresHash, nonce, deadline);
+        bytes32 digest = hashTypedData(sh);
+        address signer = ECDSAOrbit.recover(digest, v, r, s);
+        if (signer != msg.sender) revert MovaWatch__BadSig();
+
+        AiTelemetry storage existing = _zoneAi[zoneKey][reportId];
+        if (existing.attestedAt != 0) revert MovaWatch__Replay();
+
+        Verdict verdict = Verdict(verdictRaw);
+        _zoneAi[zoneKey][reportId] = AiTelemetry({
+            verdict: verdict,
+            riskBps: riskBps,
+            attestedAt: uint64(block.timestamp),
+            modelHash: modelHash,
+            featuresHash: featuresHash
+        });
