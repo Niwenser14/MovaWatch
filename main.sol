@@ -698,3 +698,73 @@ contract MovaWatch is PauseLatch {
                     sensorTag,
                     frameHash,
                     nonce,
+                    deadline
+                )
+            );
+    }
+
+    function submitMotionReport(
+        bytes32 zoneKey,
+        bytes32 reportId,
+        uint64 observedAt,
+        uint32 intensity,
+        uint32 entropy,
+        uint32 spectrum,
+        uint32 thermal,
+        uint32 acoustic,
+        bytes32 sensorTag,
+        bytes32 frameHash,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external whenNotPaused {
+        _mustZone(zoneKey);
+        if (!_reporter[msg.sender]) revert MovaWatch__NotReporter();
+        _validateDeadline(deadline);
+        _validateObservedAt(observedAt);
+
+        uint256 nonce = motionNonces[msg.sender];
+        bytes32 sh = previewMotionStructHash(
+            zoneKey,
+            reportId,
+            observedAt,
+            intensity,
+            entropy,
+            spectrum,
+            thermal,
+            acoustic,
+            sensorTag,
+            frameHash,
+            nonce,
+            deadline
+        );
+        bytes32 digest = hashTypedData(sh);
+        address signer = ECDSAOrbit.recover(digest, v, r, s);
+        if (signer != msg.sender) revert MovaWatch__BadSig();
+
+        // cooldown (per zone policy)
+        ZoneCore storage z = _zone[zoneKey];
+        ZonePolicy memory pol = _zonePolicy[zoneKey];
+        uint64 last = z.lastReportAt;
+        if (last != 0 && uint256(observedAt) < uint256(last) + uint256(pol.cooldownSec)) revert MovaWatch__ReportGap();
+
+        MotionTelemetry storage existing = _zoneReports[zoneKey][reportId];
+        if (existing.observedAt != 0) revert MovaWatch__Replay();
+
+        _zoneReports[zoneKey][reportId] = MotionTelemetry({
+            observedAt: observedAt,
+            intensity: intensity,
+            entropy: entropy,
+            spectrum: spectrum,
+            thermal: thermal,
+            acoustic: acoustic,
+            sensorTag: sensorTag,
+            frameHash: frameHash
+        });
+        z.lastReportAt = observedAt;
+        motionNonces[msg.sender] = nonce + 1;
+
+        emit MotionReportAccepted(zoneKey, reportId, msg.sender, observedAt, intensity, frameHash);
+    }
+
