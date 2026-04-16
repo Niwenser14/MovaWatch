@@ -1118,3 +1118,73 @@ contract MovaWatch is PauseLatch {
     function noteAt(bytes32 zoneKey, uint256 ringIndex) external view returns (OperatorNote memory) {
         _mustZone(zoneKey);
         RingPtr memory rp = _noteRing[zoneKey];
+        uint32 cap = rp.cap == 0 ? _NOTE_RING_CAP : rp.cap;
+        if (ringIndex >= cap) revert MovaWatch__BadPagination();
+        return _noteByIndex[zoneKey][ringIndex];
+    }
+
+    /// @notice Pins a report id for fast retrieval in client apps (owner/operator).
+    function pinReport(bytes32 zoneKey, bytes32 reportId, bytes32 reasonHash) external whenNotPaused returns (bytes32 pinId) {
+        _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        MotionTelemetry memory mot = _zoneReports[zoneKey][reportId];
+        if (mot.observedAt == 0) revert MovaWatch__Replay();
+
+        RingPtr storage rp = _pinRing[zoneKey];
+        if (rp.cap == 0) rp.cap = _PIN_RING_CAP;
+
+        pinId = keccak256(abi.encodePacked("MovaWatch.Pin.v1", zoneKey, reportId, reasonHash, msg.sender, blockhash(block.number - 1), DOMAIN_SPINE));
+        uint256 idx = rp.head;
+        bytes32 priorPin = _pinIdByIndex[zoneKey][idx];
+        if (priorPin != bytes32(0)) {
+            delete _pinToReport[zoneKey][priorPin];
+            delete _pinReasonHash[zoneKey][priorPin];
+        }
+        _pinIdByIndex[zoneKey][idx] = pinId;
+        _pinToReport[zoneKey][pinId] = reportId;
+        _pinReasonHash[zoneKey][pinId] = reasonHash;
+
+        unchecked {
+            rp.head = uint32((idx + 1) % rp.cap);
+            if (rp.size < rp.cap) rp.size += 1;
+        }
+
+        emit ReportPinned(zoneKey, reportId, pinId, reasonHash);
+    }
+
+    function unpinReport(bytes32 zoneKey, bytes32 pinId) external whenNotPaused {
+        _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        bytes32 rep = _pinToReport[zoneKey][pinId];
+        if (rep == bytes32(0)) revert MovaWatch__PinnedMissing();
+        delete _pinToReport[zoneKey][pinId];
+        delete _pinReasonHash[zoneKey][pinId];
+        emit ReportUnpinned(zoneKey, pinId);
+    }
+
+    function pinRing(bytes32 zoneKey) external view returns (RingPtr memory) {
+        _mustZone(zoneKey);
+        RingPtr memory rp = _pinRing[zoneKey];
+        if (rp.cap == 0) rp.cap = _PIN_RING_CAP;
+        return rp;
+    }
+
+    function pinnedAt(bytes32 zoneKey, uint256 ringIndex)
+        external
+        view
+        returns (bytes32 pinId, bytes32 reportId, bytes32 reasonHash)
+    {
+        _mustZone(zoneKey);
+        RingPtr memory rp = _pinRing[zoneKey];
+        uint32 cap = rp.cap == 0 ? _PIN_RING_CAP : rp.cap;
+        if (ringIndex >= cap) revert MovaWatch__BadPagination();
+        pinId = _pinIdByIndex[zoneKey][ringIndex];
+        reportId = _pinToReport[zoneKey][pinId];
+        reasonHash = _pinReasonHash[zoneKey][pinId];
+    }
+
+    /// @dev Hook: increment attestation count when AI attestation succeeds.
+    /// Kept as a separate internal function to maintain readability.
+    function _bumpAiCount(bytes32 zoneKey, bytes32 reportId) internal {
+        uint8 prev = _aiAttestCount[zoneKey][reportId];
+        // Saturate at 255; UI-only signal.
