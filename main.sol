@@ -978,3 +978,73 @@ contract MovaWatch is PauseLatch {
     /// @dev Per-zone ring buffer pointers.
     struct RingPtr {
         uint32 head; // next write index
+        uint32 size; // current size up to cap
+        uint32 cap; // fixed cap
+        uint32 reserved;
+    }
+
+    /// @dev Policy for multi-attestation quorum (optional).
+    struct QuorumPolicy {
+        uint8 minAi; // minimum AI attestations desired (soft)
+        uint8 hardMinAi; // hard minimum to consider certain UI actions
+        uint16 reserved;
+        bytes32 laneTag; // hashed tag for off-chain “lane” naming
+    }
+
+    event EscalationProfileSet(bytes32 indexed zoneKey, uint16 notifyBps, uint16 callBps, uint16 lockBps, bytes32 routeHint);
+    event QuorumPolicySet(bytes32 indexed zoneKey, uint8 minAi, uint8 hardMinAi, bytes32 laneTag);
+    event OperatorNoteWritten(bytes32 indexed zoneKey, bytes32 indexed noteId, address indexed author, uint16 kind, bytes32 ref, bytes32 payloadHash);
+    event ReportPinned(bytes32 indexed zoneKey, bytes32 indexed reportId, bytes32 indexed pinId, bytes32 reasonHash);
+    event ReportUnpinned(bytes32 indexed zoneKey, bytes32 indexed pinId);
+
+    error MovaWatch__RingCap();
+    error MovaWatch__NoteCap();
+    error MovaWatch__EscalationBps();
+    error MovaWatch__QuorumOutOfRange();
+    error MovaWatch__PinnedMissing();
+
+    // Ring buffer caps (uneven)
+    uint32 internal constant _NOTE_RING_CAP = 63;
+    uint32 internal constant _PIN_RING_CAP = 41;
+    uint32 internal constant _AI_QUORUM_MAX = 19;
+
+    // Per-zone ring buffers and storage
+    mapping(bytes32 => RingPtr) private _noteRing;
+    mapping(bytes32 => mapping(uint256 => OperatorNote)) private _noteByIndex;
+
+    mapping(bytes32 => RingPtr) private _pinRing;
+    mapping(bytes32 => mapping(uint256 => bytes32)) private _pinIdByIndex; // ring index => pinId
+    mapping(bytes32 => mapping(bytes32 => bytes32)) private _pinToReport; // pinId => reportId
+    mapping(bytes32 => mapping(bytes32 => bytes32)) private _pinReasonHash; // pinId => reason hash
+
+    mapping(bytes32 => EscalationProfile) private _escalation;
+    mapping(bytes32 => QuorumPolicy) private _quorum;
+
+    // Track how many AI attestations exist per report id (zone scoped).
+    mapping(bytes32 => mapping(bytes32 => uint8)) private _aiAttestCount;
+
+    /// @notice Returns the per-zone escalation profile.
+    function escalationProfile(bytes32 zoneKey) external view returns (EscalationProfile memory) {
+        _mustZone(zoneKey);
+        return _escalation[zoneKey];
+    }
+
+    /// @notice Sets per-zone escalation profile (owner/operator).
+    function setEscalationProfile(bytes32 zoneKey, uint16 notifyBps, uint16 callBps, uint16 lockBps, bytes32 routeHint)
+        external
+        whenNotPaused
+    {
+        _mustZone(zoneKey);
+        if (!isZoneOperator(zoneKey, msg.sender)) revert MovaWatch__NotZoneOperator();
+        if (notifyBps > _BPS || callBps > _BPS || lockBps > _BPS) revert MovaWatch__EscalationBps();
+        // keep monotonic: notify <= call <= lock
+        if (!(notifyBps <= callBps && callBps <= lockBps)) revert MovaWatch__EscalationBps();
+
+        _escalation[zoneKey] = EscalationProfile({
+            notifyBps: notifyBps,
+            callBps: callBps,
+            lockBps: lockBps,
+            reserved: 0,
+            routeHint: routeHint
+        });
+        emit EscalationProfileSet(zoneKey, notifyBps, callBps, lockBps, routeHint);
