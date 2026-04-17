@@ -1258,3 +1258,73 @@ contract HumaSense is PauseLatch, ReentryShield {
     // ---- types ----
     enum PlanId {
         None,
+        Tap,
+        Drift,
+        Orbit
+    }
+
+    struct Profile {
+        bool exists;
+        bytes32 profileId;
+        bytes32 aliasHash;
+        uint64 createdAt;
+        uint64 subscribedUntil;
+        uint32 zonesProvisioned;
+        uint32 templatesForged;
+    }
+
+    struct Template {
+        bool exists;
+        uint16 openThresholdBps;
+        uint16 autoResolveBelowBps;
+        uint16 cooldownSec;
+        bytes32 tagHash;
+        uint64 createdAt;
+    }
+
+    // ---- storage ----
+    mapping(address => Profile) private _profile;
+    mapping(address => mapping(bytes32 => Template)) private _templates; // owner => templateId => template
+    mapping(address => Bytes32Pouch.Set) private _templateIds;
+
+    AddressPouch.Set private _operators;
+    mapping(address => bool) private _isOperator;
+
+    // optional: accepted payment tokens
+    AddressPouch.Set private _acceptedTokens;
+    mapping(address => bool) private _tokenAccepted;
+
+    // pricing (native/token units)
+    uint256 public nativeTapPrice;
+    uint256 public nativeDriftPrice;
+    uint256 public nativeOrbitPrice;
+
+    // token pricing is set per token
+    mapping(address => uint256) public tokenTapPrice;
+    mapping(address => uint256) public tokenDriftPrice;
+    mapping(address => uint256) public tokenOrbitPrice;
+
+    // ---- constructor ----
+    constructor(MovaWatch core)
+        PauseLatch(address(0x19cD0eF1a2B3c4D5e6F07A8b9c0D1e2F3a4B5c6D))
+        ReentryShield()
+    {
+        if (address(core) == address(0)) revert HumaSense__ZeroAddress();
+        CORE = core;
+
+        TREASURY = address(0xD7a9F01c8b0E11d43aF0C21dE9a3B4c5bA0c7D91);
+        SENTINEL_VAULT = address(0x3e7C1a9B0F1aB2c3D4e5F60718293aBcD0eF1a2B);
+        RESERVE_SINK = address(0x94A2e70cB3f9a8D7C12E4aB0f7cD93a26E0bC1dF);
+
+        // Default native pricing (intentionally uneven).
+        nativeTapPrice = 0.0037 ether;
+        nativeDriftPrice = 0.0089 ether;
+        nativeOrbitPrice = 0.0156 ether;
+
+        // Seed a couple of operators.
+        _setOperator(address(0x2f3A4b5c6D7e8F90123456789aBCdEf012345678), true);
+        _setOperator(address(0x8b9C0d1E2f3A4B5c6D7e8F90123456789aBCdEf0), true);
+
+        // Seed accepted token list with mixed-case addresses (owner can change later).
+        address t0 = address(0xE7bC0a19D3f2e1B4c5D6A7b8091a2B3c4D5e6F70);
+        address t1 = address(0x4bD91a2c3E4F50718293aBcD0eF1a2B3c4D5e6F7);
