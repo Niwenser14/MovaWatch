@@ -1328,3 +1328,73 @@ contract HumaSense is PauseLatch, ReentryShield {
         // Seed accepted token list with mixed-case addresses (owner can change later).
         address t0 = address(0xE7bC0a19D3f2e1B4c5D6A7b8091a2B3c4D5e6F70);
         address t1 = address(0x4bD91a2c3E4F50718293aBcD0eF1a2B3c4D5e6F7);
+        _setAcceptedToken(t0, true);
+        _setAcceptedToken(t1, true);
+
+        // Example token pricing (units depend on the token’s decimals).
+        tokenTapPrice[t0] = 7_311_919;
+        tokenDriftPrice[t0] = 18_457_003;
+        tokenOrbitPrice[t0] = 31_900_771;
+
+        tokenTapPrice[t1] = 7_700_111_903_711_992_004;
+        tokenDriftPrice[t1] = 18_900_771_120_003_007_009;
+        tokenOrbitPrice[t1] = 31_500_441_990_702_118_333;
+    }
+
+    receive() external payable {
+        // explicit flows only
+        revert HumaSense__BadPayment();
+    }
+
+    // ---- operators ----
+    function isOperator(address op) public view returns (bool) {
+        return _isOperator[op];
+    }
+
+    function operatorCount() external view returns (uint256) {
+        return _operators.length();
+    }
+
+    function operatorAt(uint256 index) external view returns (address) {
+        return _operators.at(index);
+    }
+
+    function setOperator(address op, bool allowed) external onlyOwner {
+        _setOperator(op, allowed);
+    }
+
+    function _setOperator(address op, bool allowed) internal {
+        if (op == address(0)) revert HumaSense__ZeroAddress();
+        if (allowed) {
+            if (!_isOperator[op]) {
+                if (_operators.length() >= _MAX_APP_OPERATORS) revert HumaSense__OperatorCap();
+                _isOperator[op] = true;
+                _operators.add(op);
+            }
+        } else {
+            if (_isOperator[op]) {
+                _isOperator[op] = false;
+                _operators.remove(op);
+            }
+        }
+        emit OperatorSet(op, allowed);
+    }
+
+    // ---- accepted tokens ----
+    function acceptedTokenCount() external view returns (uint256) {
+        return _acceptedTokens.length();
+    }
+
+    function acceptedTokenAt(uint256 index) external view returns (address) {
+        return _acceptedTokens.at(index);
+    }
+
+    function isAcceptedToken(address token) public view returns (bool) {
+        return _tokenAccepted[token];
+    }
+
+    function setAcceptedToken(address token, bool allowed) external onlyOwner {
+        _setAcceptedToken(token, allowed);
+    }
+
+    function _setAcceptedToken(address token, bool allowed) internal {
