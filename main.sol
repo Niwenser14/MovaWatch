@@ -1398,3 +1398,73 @@ contract HumaSense is PauseLatch, ReentryShield {
     }
 
     function _setAcceptedToken(address token, bool allowed) internal {
+        if (token == address(0)) revert HumaSense__ZeroAddress();
+        if (allowed) {
+            if (!_tokenAccepted[token]) {
+                _tokenAccepted[token] = true;
+                _acceptedTokens.add(token);
+            }
+        } else {
+            if (_tokenAccepted[token]) {
+                _tokenAccepted[token] = false;
+                _acceptedTokens.remove(token);
+            }
+        }
+    }
+
+    // ---- profile ----
+    function profileOf(address user) external view returns (Profile memory) {
+        return _profile[user];
+    }
+
+    function ensureProfile(string calldata aliasText) external whenNotPaused returns (bytes32 profileId) {
+        if (bytes(aliasText).length == 0 || bytes(aliasText).length > _MAX_PROFILE_ALIAS_BYTES) revert HumaSense__BadAlias();
+        Profile storage p = _profile[msg.sender];
+        if (p.exists) {
+            // do not overwrite; return existing
+            return p.profileId;
+        }
+
+        profileId = keccak256(abi.encodePacked("HumaSense.Profile.v1", msg.sender, blockhash(block.number - 1), _APP_SIGIL));
+        p.exists = true;
+        p.profileId = profileId;
+        p.aliasHash = keccak256(bytes(aliasText));
+        p.createdAt = uint64(block.timestamp);
+        p.subscribedUntil = 0;
+        p.zonesProvisioned = 0;
+        p.templatesForged = 0;
+
+        emit ProfileCreated(msg.sender, profileId, p.aliasHash, aliasText);
+    }
+
+    function setProfileAlias(string calldata aliasText) external whenNotPaused {
+        if (bytes(aliasText).length == 0 || bytes(aliasText).length > _MAX_PROFILE_ALIAS_BYTES) revert HumaSense__BadAlias();
+        Profile storage p = _profile[msg.sender];
+        if (!p.exists) revert HumaSense__ProfileMissing();
+        p.aliasHash = keccak256(bytes(aliasText));
+        emit ProfileAliasSet(msg.sender, p.profileId, p.aliasHash, aliasText);
+    }
+
+    // ---- templates ----
+    function templateCount(address ownerAddr) external view returns (uint256) {
+        return _templateIds[ownerAddr].length();
+    }
+
+    function templateIdAt(address ownerAddr, uint256 index) external view returns (bytes32) {
+        return _templateIds[ownerAddr].at(index);
+    }
+
+    function getTemplate(address ownerAddr, bytes32 templateId) external view returns (Template memory) {
+        return _templates[ownerAddr][templateId];
+    }
+
+    function forgeTemplate(uint16 openThresholdBps, uint16 autoResolveBelowBps, uint16 cooldownSec, string calldata tagText)
+        external
+        whenNotPaused
+        returns (bytes32 templateId)
+    {
+        Profile storage p = _profile[msg.sender];
+        if (!p.exists) revert HumaSense__ProfileMissing();
+        if (openThresholdBps > _BPS || autoResolveBelowBps > _BPS) revert HumaSense__BadBps();
+        if (autoResolveBelowBps >= openThresholdBps) revert HumaSense__BadBps();
+        if (bytes(tagText).length == 0 || bytes(tagText).length > _MAX_TAG_BYTES) revert HumaSense__BadTag();
